@@ -14,7 +14,8 @@
     "repu_cycle_backend": {
       "candid": "src/repu_cycle_backend/repu_cycle_backend.did",
       "package": "repu_cycle_backend",
-      "type": "rust"
+      "type": "rust",
+      "build": "cargo build --target wasm32-unknown-unknown --release"
     },
     "repu_cycle_frontend": {
       "dependencies": [

@@ -1,3 +1,51 @@
 service : {
-    "greet": (text) -> (text) query;
-}
+    // User Management
+    register_user : (id: text, email: text) -> (result: text) update;
+    get_user : (id: text) -> (user: opt User) query;
+    update_user : (id: text, tokens: nat32) -> (result: text) update;
+
+    // Waste Logging
+    log_waste_data : (user_id: text, waste_generated: nat32, recyclable_waste: nat32) -> (footprint_score: float) update;
+    get_footprint : (user_id: text) -> (footprint: opt UserFootprint) query;
+
+    // Quiz Management
+    add_quiz : (id: text, questions: vec text, correct_answers: vec text) -> (result: text) update;
+    submit_quiz : (id: text, user_answers: vec text) -> (score: nat32) update;
+
+    // Challenge Management
+    add_challenge : (id: text, description: text, reward_tokens: nat32) -> (result: text) update;
+    reward_user : (user_id: text, challenge_id: text) -> (result: text) update;
+
+    // Token Management
+    mint_tokens : (user_id: text, amount: nat32) -> (result: text) update;
+    transfer_tokens : (from: text, to: text, amount: nat32) -> (result: text) update;
+    get_balance : (user_id: text) -> (balance: nat32) query;
+};
+
+// Type Definitions
+type User = record {
+    id: text;
+    email: text;
+    tokens: nat32; // No trailing comma here
+};
+
+type UserFootprint = record {
+    waste_generated: nat32; // kg of waste generated
+    recyclable_waste: nat32; // kg of recyclable waste
+    footprint_score: float; // Calculated carbon footprint score
+};
+
+type Quiz = record {
+    questions: vec text;
+    correct_answers: vec text; // No trailing comma here
+};
+
+type Challenge = record {
+    description: text;
+    reward_tokens: nat32; // No trailing comma here
+};
+
+type Token = record {
+    owner: text;
+    balance: nat32; // No trailing comma here
+};
