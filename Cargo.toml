@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "src/repu_cycle_backend"
+]
+resolver = "2"
