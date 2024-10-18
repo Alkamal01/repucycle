@@ -10,19 +10,29 @@ struct User {
     id: String,
     email: String,
     tokens: u32,
+    role: Role,
+    preferred_language: String,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Role {
+    Admin,
+    User,
 }
 
 #[derive(Clone, CandidType, Deserialize)]
 struct UserFootprint {
-    waste_generated: u32, // kg of waste generated
-    recyclable_waste: u32, // kg of recyclable waste
-    footprint_score: f32, // Calculated carbon footprint score
+    waste_generated: u32, 
+    recyclable_waste: u32, 
+    footprint_score: f32, 
 }
 
 #[derive(Clone, CandidType, Deserialize)]
 struct Quiz {
+    level: u32,
     questions: Vec<String>,
     correct_answers: Vec<String>,
+    reward: u32, // Reward tokens for quiz completion
 }
 
 #[derive(Clone, CandidType, Deserialize)]
@@ -43,63 +53,109 @@ type Footprints = HashMap<String, UserFootprint>;
 type Quizzes = HashMap<String, Quiz>;
 type Challenges = HashMap<String, Challenge>;
 type Ledger = HashMap<String, Token>;
+type ActionLog = Vec<String>;
 
 // Initialize all shared storage
 #[init]
 fn init() {
     storage::stable_save((
-        HashMap::<String, User>::new(), // Explicit type annotation
-        HashMap::<String, UserFootprint>::new(), // Explicit type annotation
-        HashMap::<String, Quiz>::new(), // Explicit type annotation
-        HashMap::<String, Challenge>::new(), // Explicit type annotation
-        HashMap::<String, Token>::new() // Explicit type annotation
+        HashMap::<String, User>::new(), 
+        HashMap::<String, UserFootprint>::new(), 
+        HashMap::<String, Quiz>::new(), 
+        HashMap::<String, Challenge>::new(), 
+        HashMap::<String, Token>::new(), 
+        Vec::<String>::new(),  // Action log for transparency
     )).unwrap();
 }
 
-// User Registration
+// Logging Function
+fn log_action(action: &str) {
+    let (_, _, _, _, _, mut log) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
+    log.push(action.to_string());
+    storage::stable_save((
+        HashMap::<String, User>::new(), 
+        HashMap::<String, UserFootprint>::new(), 
+        HashMap::<String, Quiz>::new(), 
+        HashMap::<String, Challenge>::new(), 
+        HashMap::<String, Token>::new(), 
+        log,
+    )).unwrap();
+}
+
+// User Registration (with roles)
 #[update]
-fn register_user(id: String, email: String) -> Result<String, String> {
-    let (mut users, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+fn register_user(id: String, email: String, role: Role, preferred_language: String) -> Result<String, String> {
+    let (mut users, _, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
     if users.contains_key(&id) {
         return Err("User already exists".to_string());
     }
     
-    users.insert(id.clone(), User { id: id.clone(), email, tokens: 0 });
+    users.insert(id.clone(), User { id: id.clone(), email, tokens: 0, role, preferred_language });
     storage::stable_save((
         users,
-        HashMap::<String, UserFootprint>::new(), // Updated with actual types
-        HashMap::<String, Quiz>::new(), // Updated with actual types
-        HashMap::<String, Challenge>::new(), // Updated with actual types
-        HashMap::<String, Token>::new(), // Updated with actual types
+        HashMap::<String, UserFootprint>::new(), 
+        HashMap::<String, Quiz>::new(), 
+        HashMap::<String, Challenge>::new(), 
+        HashMap::<String, Token>::new(),
+        Vec::<String>::new(), // Log initialization
     )).unwrap();
+
+    log_action(&format!("User {} registered", id));
     
     Ok("User registered successfully".to_string())
 }
 
+// Get User Information
 #[query]
 fn get_user(id: String) -> Option<User> {
-    let (users, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (users, _, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     users.get(&id).cloned()
 }
 
+// Update User Tokens
 #[update]
 fn update_user(id: String, tokens: u32) -> Result<String, String> {
-    let (mut users, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (mut users, _, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
     match users.get_mut(&id) {
         Some(user) => {
             user.tokens += tokens;
             storage::stable_save((
                 users,
-                HashMap::<String, UserFootprint>::new(), // Updated with actual types
-                HashMap::<String, Quiz>::new(), // Updated with actual types
-                HashMap::<String, Challenge>::new(), // Updated with actual types
-                HashMap::<String, Token>::new(), // Updated with actual types
+                HashMap::<String, UserFootprint>::new(), 
+                HashMap::<String, Quiz>::new(), 
+                HashMap::<String, Challenge>::new(), 
+                HashMap::<String, Token>::new(),
+                Vec::<String>::new(),
             )).unwrap();
+            log_action(&format!("User {} updated", id));
             Ok("User updated successfully".to_string())
         }
         None => Err("User not found".to_string()),
+    }
+}
+
+// Admin Feature: Add Quiz
+#[update]
+fn add_quiz(id: String, level: u32, questions: Vec<String>, correct_answers: Vec<String>, reward: u32) -> Result<String, String> {
+    let (users, _, mut quizzes, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
+    
+    match users.get(&id) {
+        Some(user) if user.role == Role::Admin => {
+            quizzes.insert(id.clone(), Quiz { level, questions, correct_answers, reward });
+            storage::stable_save((
+                HashMap::<String, User>::new(),
+                HashMap::<String, UserFootprint>::new(), 
+                quizzes,
+                HashMap::<String, Challenge>::new(), 
+                HashMap::<String, Token>::new(),
+                Vec::<String>::new(),
+            )).unwrap();
+            log_action(&format!("Admin {} added quiz", id));
+            Ok("Quiz added successfully".to_string())
+        }
+        _ => Err("Unauthorized access".to_string()),
     }
 }
 
@@ -107,85 +163,59 @@ fn update_user(id: String, tokens: u32) -> Result<String, String> {
 #[update]
 fn log_waste_data(user_id: String, waste_generated: u32, recyclable_waste: u32) -> Result<f32, String> {
     let footprint_score = (waste_generated as f32) * 0.7 - (recyclable_waste as f32) * 0.5;
-    let (_, mut footprints, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (_, mut footprints, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
     footprints.insert(user_id.clone(), UserFootprint { waste_generated, recyclable_waste, footprint_score });
     storage::stable_save((
-        HashMap::<String, User>::new(), // Updated with actual types
+        HashMap::<String, User>::new(),
         footprints,
-        HashMap::<String, Quiz>::new(), // Updated with actual types
-        HashMap::<String, Challenge>::new(), // Updated with actual types
-        HashMap::<String, Token>::new(), // Updated with actual types
+        HashMap::<String, Quiz>::new(),
+        HashMap::<String, Challenge>::new(),
+        HashMap::<String, Token>::new(),
+        Vec::<String>::new(),
     )).unwrap();
     
+    log_action(&format!("User {} logged waste data", user_id));
     Ok(footprint_score)
 }
 
+// Get User Footprint
 #[query]
 fn get_footprint(user_id: String) -> Option<UserFootprint> {
-    let (_, footprints, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (_, footprints, _, _, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     footprints.get(&user_id).cloned()
 }
 
-// Quiz Management
+// Admin Feature: Add Challenge
 #[update]
-fn add_quiz(id: String, questions: Vec<String>, correct_answers: Vec<String>) -> Result<String, String> {
-    let (_, _, mut quizzes, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+fn add_challenge(admin_id: String, challenge_id: String, description: String, reward_tokens: u32) -> Result<String, String> {
+    let (users, _, _, mut challenges, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
-    quizzes.insert(id.clone(), Quiz { questions, correct_answers });
-    storage::stable_save((
-        HashMap::<String, User>::new(), // Updated with actual types
-        HashMap::<String, UserFootprint>::new(), // Updated with actual types
-        quizzes,
-        HashMap::<String, Challenge>::new(), // Updated with actual types
-        HashMap::<String, Token>::new(), // Updated with actual types
-    )).unwrap();
-    
-    Ok("Quiz added successfully".to_string())
-}
-
-#[update]
-fn submit_quiz(id: String, user_answers: Vec<String>) -> Result<u32, String> {
-    let (_, _, quizzes, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
-    
-    match quizzes.get(&id) {
-        Some(quiz) => {
-            let correct_answers = &quiz.correct_answers;
-            let score = user_answers.iter()
-                .enumerate()
-                .filter(|(i, user_answer)| *user_answer == &correct_answers[*i]) // Use reference here
-                .count() as u32;
-            Ok(score)
+    match users.get(&admin_id) {
+        Some(user) if user.role == Role::Admin => {
+            challenges.insert(challenge_id.clone(), Challenge { description, reward_tokens });
+            storage::stable_save((
+                HashMap::<String, User>::new(),
+                HashMap::<String, UserFootprint>::new(),
+                HashMap::<String, Quiz>::new(),
+                challenges,
+                HashMap::<String, Token>::new(),
+                Vec::<String>::new(),
+            )).unwrap();
+            log_action(&format!("Admin {} added challenge", admin_id));
+            Ok("Challenge added successfully".to_string())
         }
-        None => Err("Quiz not found".to_string()),
+        _ => Err("Unauthorized access".to_string()),
     }
 }
 
-
-// Challenge Management
-#[update]
-fn add_challenge(id: String, description: String, reward_tokens: u32) -> Result<String, String> {
-    let (_, _, _, mut challenges, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
-    
-    challenges.insert(id.clone(), Challenge { description, reward_tokens });
-    storage::stable_save((
-        HashMap::<String, User>::new(), // Updated with actual types
-        HashMap::<String, UserFootprint>::new(), // Updated with actual types
-        HashMap::<String, Quiz>::new(), // Updated with actual types
-        challenges,
-        HashMap::<String, Token>::new(), // Updated with actual types
-    )).unwrap();
-    
-    Ok("Challenge added successfully".to_string())
-}
-
+// Reward User for Completing Challenge
 #[update]
 async fn reward_user(user_id: String, challenge_id: String) -> Result<String, String> {
-    let (_, _, _, challenges, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (_, _, _, challenges, _, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
     match challenges.get(&challenge_id) {
         Some(challenge) => {
-            // Use the `?` operator to propagate the error
             let result: Result<(), (RejectionCode, String)> = ic_cdk::call(
                 ic_cdk::export::Principal::from_text("token_management").unwrap(), 
                 "mint_tokens", 
@@ -193,74 +223,68 @@ async fn reward_user(user_id: String, challenge_id: String) -> Result<String, St
             ).await;
             
             result.map_err(|(_, e)| e)?;
-            
+            log_action(&format!("User {} rewarded for challenge {}", user_id, challenge_id));
             Ok("User rewarded successfully".to_string())
         }
         None => Err("Challenge not found".to_string()),
     }
 }
 
-// Token Management
+// Token Management: Mint Tokens
 #[update]
 fn mint_tokens(user_id: String, amount: u32) -> Result<String, String> {
-    let (_, _, _, _, mut ledger) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+    let (_, _, _, _, mut ledger, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
     let token = ledger.entry(user_id.clone()).or_insert(Token {
         owner: user_id.clone(),
         balance: 0,
     });
+    
     token.balance += amount;
     
     storage::stable_save((
-        HashMap::<String, User>::new(), // Updated with actual types
-        HashMap::<String, UserFootprint>::new(), // Updated with actual types
-        HashMap::<String, Quiz>::new(), // Updated with actual types
-        HashMap::<String, Challenge>::new(), // Updated with actual types
-        ledger
+        HashMap::<String, User>::new(),
+        HashMap::<String, UserFootprint>::new(),
+        HashMap::<String, Quiz>::new(),
+        HashMap::<String, Challenge>::new(),
+        ledger,
+        Vec::<String>::new(),
     )).unwrap();
-    Ok("Tokens minted successfully".to_string())
+    
+    log_action(&format!("Minted {} tokens to {}", amount, user_id));
+    Ok(format!("{} tokens minted to {}", amount, user_id))
 }
 
+// Token Management: Burn Tokens
 #[update]
-fn transfer_tokens(from: String, to: String, amount: u32) -> Result<String, String> {
-    let (_, _, _, _, mut ledger) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
+fn burn_tokens(user_id: String, amount: u32) -> Result<String, String> {
+    let (_, _, _, _, mut ledger, _) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
     
-    // First, try to get the mutable reference for the sender
-    if let Some(sender_token) = ledger.get_mut(&from) {
-        // Check if the sender has sufficient balance
-        if sender_token.balance >= amount {
-            // Reduce the sender's balance
-            sender_token.balance -= amount;
-
-            // Safely handle the receiver
-            let receiver = ledger.entry(to.clone()).or_insert(Token { owner: to.clone(), balance: 0 });
-            receiver.balance += amount; // Increase the receiver's balance
-
-            // Save the updated ledger back to stable storage
-            storage::stable_save((
-                HashMap::<String, User>::new(), // Updated with actual types
-                HashMap::<String, UserFootprint>::new(), // Updated with actual types
-                HashMap::<String, Quiz>::new(), // Updated with actual types
-                HashMap::<String, Challenge>::new(), // Updated with actual types
-                ledger
-            )).unwrap();
-
-            Ok("Tokens transferred successfully".to_string())
-        } else {
-            Err("Insufficient balance".to_string())
+    match ledger.get_mut(&user_id) {
+        Some(token) => {
+            if token.balance >= amount {
+                token.balance -= amount;
+                storage::stable_save((
+                    HashMap::<String, User>::new(),
+                    HashMap::<String, UserFootprint>::new(),
+                    HashMap::<String, Quiz>::new(),
+                    HashMap::<String, Challenge>::new(),
+                    ledger,
+                    Vec::<String>::new(),
+                )).unwrap();
+                log_action(&format!("Burned {} tokens from {}", amount, user_id));
+                Ok(format!("{} tokens burned from {}", amount, user_id))
+            } else {
+                Err("Insufficient balance".to_string())
+            }
         }
-    } else {
-        Err("Sender not found".to_string())
+        None => Err("User not found in ledger".to_string()),
     }
 }
 
-
+// Admin Feature: Get Logs for Transparency
 #[query]
-fn get_balance(user_id: String) -> Result<u32, String> {
-    let (_, _, _, _, ledger) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger)>().unwrap();
-    
-    match ledger.get(&user_id) {
-        Some(token) => Ok(token.balance),
-        None => Err("User not found".to_string()),
-    }
+fn get_action_logs() -> ActionLog {
+    let (_, _, _, _, _, logs) = storage::stable_restore::<(Users, Footprints, Quizzes, Challenges, Ledger, ActionLog)>().unwrap();
+    logs
 }

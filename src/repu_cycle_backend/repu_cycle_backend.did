@@ -1,6 +1,6 @@
 service : {
     // User Management
-    register_user : (id: text, email: text) -> (result: text) update;
+    register_user : (id: text, email: text) -> (result: text) update
     get_user : (id: text) -> (user: opt User) query;
     update_user : (id: text, tokens: nat32) -> (result: text) update;
 
